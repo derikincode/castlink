@@ -7,15 +7,15 @@ import { StatusDot } from './StatusDot'
 import { LogPanel } from './LogPanel'
 
 export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }) {
-  const [status, setStatus]             = useState('waiting')
-  const [hasStream, setHasStream]       = useState(false)
-  const [needsPlay, setNeedsPlay]       = useState(false) // autoplay bloqueado
+  const [status, setStatus]               = useState('waiting')
+  const [hasStream, setHasStream]         = useState(false)
+  const [needsPlay, setNeedsPlay]         = useState(false)
   const [autoFullscreen, setAutoFullscreen] = useState(true)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isFullscreen, setIsFullscreen]   = useState(false)
 
-  const remoteVideoRef = useRef(null)
+  const remoteVideoRef  = useRef(null)
   const remoteStreamRef = useRef(null)
-  const internalPCRef  = useRef(null)
+  const internalPCRef   = useRef(null)
 
   const { entries, append } = useLog()
   const stats = useRTCStats(internalPCRef, hasStream)
@@ -30,9 +30,23 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
     }
   }, [])
 
+  // Fullscreen no próprio vídeo — ocupa a tela toda, sem UI ao redor
   const goFullscreen = useCallback(() => {
-    const el = document.documentElement
-    ;(el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen)?.call(el)
+    const v = remoteVideoRef.current
+    if (!v) return
+    const fn = v.requestFullscreen || v.webkitRequestFullscreen || v.mozRequestFullScreen || v.msRequestFullscreen
+    if (fn) fn.call(v)
+    else {
+      // Fallback: fullscreen na página inteira
+      const d = document.documentElement
+      ;(d.requestFullscreen || d.webkitRequestFullscreen)?.call(d)
+    }
+  }, [])
+
+  const exitFullscreen = useCallback(() => {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      ;(document.exitFullscreen || document.webkitExitFullscreen)?.call(document)
+    }
   }, [])
 
   const forcePlay = useCallback(() => {
@@ -73,7 +87,6 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
               if (autoFullscreen) setTimeout(goFullscreen, 500)
             })
             .catch(() => {
-              // Autoplay bloqueado — pede interação do usuário
               setNeedsPlay(true)
               setStatus('receiving')
               append('clique em ▶ para iniciar', 'info')
@@ -90,7 +103,7 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
         if (s === 'disconnected' || s === 'failed' || s === 'closed') {
           setStatus('waiting'); setHasStream(false); setNeedsPlay(false)
           if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
-          if (document.fullscreenElement) document.exitFullscreen()
+          exitFullscreen()
           append('transmissor desconectou')
         }
       }
@@ -128,16 +141,19 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
 
         {/* Center */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 1 }}>
-          {/* Vídeo — sempre montado para receber o stream */}
+
+          {/* Vídeo — sempre montado, fullscreen no próprio elemento */}
           <video
             ref={remoteVideoRef}
             autoPlay
             playsInline
-            muted={false}
             style={{
-              width: '100%', maxHeight: '70vh',
-              objectFit: 'contain', borderRadius: 12,
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
               display: hasStream && !needsPlay ? 'block' : 'none',
+              // Em fullscreen, ocupa tudo
+              backgroundColor: '#000',
             }}
           />
 
@@ -158,25 +174,11 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
             </div>
           )}
 
-          {/* Autoplay bloqueado — botão grande para tocar */}
+          {/* Autoplay bloqueado */}
           {needsPlay && (
-            <button
-              onClick={forcePlay}
-              style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20,
-                background: 'transparent', border: 'none', cursor: 'pointer', padding: '2rem',
-              }}
-            >
-              <div style={{
-                width: 120, height: 120, borderRadius: '50%',
-                background: 'var(--accent)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 0 60px rgba(79,70,229,0.4)',
-                animation: 'pulse 2s ease-in-out infinite',
-              }}>
-                <svg width="50" height="50" viewBox="0 0 24 24" fill="white">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
+            <button onClick={forcePlay} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, background: 'transparent', border: 'none', cursor: 'pointer', padding: '2rem' }}>
+              <div style={{ width: 120, height: 120, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 60px rgba(79,70,229,0.4)', animation: 'pulse 2s ease-in-out infinite' }}>
+                <svg width="50" height="50" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
               </div>
               <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)' }}>Toque para reproduzir</span>
               <span style={{ fontSize: 14, color: 'var(--text3)', fontFamily: 'var(--mono)' }}>o stream chegou — clique para iniciar</span>
@@ -187,9 +189,12 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
         {/* Bottom bar */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative', zIndex: 1 }}>
           {hasStream ? <StatsBar stats={stats} videoEl={remoteVideoRef.current} tvMode /> : <div />}
-          {hasStream && !isFullscreen && !needsPlay && (
-            <button onClick={goFullscreen} style={{ fontSize: 13, fontFamily: 'var(--mono)', background: 'var(--accent)', border: 'none', color: '#fff', padding: '10px 22px', borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>
-              ⛶ tela cheia
+          {hasStream && !needsPlay && (
+            <button
+              onClick={isFullscreen ? exitFullscreen : goFullscreen}
+              style={{ fontSize: 13, fontFamily: 'var(--mono)', background: 'var(--accent)', border: 'none', color: '#fff', padding: '10px 22px', borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}
+            >
+              {isFullscreen ? '✕ sair tela cheia' : '⛶ tela cheia'}
             </button>
           )}
         </div>
@@ -228,7 +233,6 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
           <span style={{ fontSize: 11, color: 'var(--text2)', fontFamily: 'var(--mono)' }}>fullscreen automático</span>
         </label>
 
-        {/* Vídeo sempre montado */}
         <div style={{ position: 'relative' }}>
           <VideoFrame ref={remoteVideoRef} hasStream={hasStream && !needsPlay} placeholderText="aguardando transmissor iniciar..." type="remote" onFullscreen={!isFullscreen && hasStream && !needsPlay ? goFullscreen : undefined} />
           {needsPlay && (
@@ -244,9 +248,12 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
         </div>
 
         {hasStream && !needsPlay && <StatsBar stats={stats} videoEl={remoteVideoRef.current} />}
-        {hasStream && !isFullscreen && !needsPlay && (
-          <button onClick={goFullscreen} style={{ alignSelf: 'flex-start', padding: '10px 18px', borderRadius: 10, fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff' }}>
-            ⛶ fullscreen
+        {hasStream && !needsPlay && (
+          <button
+            onClick={isFullscreen ? exitFullscreen : goFullscreen}
+            style={{ alignSelf: 'flex-start', padding: '10px 18px', borderRadius: 10, fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff' }}
+          >
+            {isFullscreen ? '✕ sair tela cheia' : '⛶ fullscreen'}
           </button>
         )}
         <LogPanel entries={entries} />
