@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { useRTCStats } from '../hooks/useRTCStats'
 import { useLog } from '../hooks/useLog'
-import { QUALITY_PRESETS, applyMaxBitrate, preferHighQualityCodec } from '../lib/rtc'
+import { QUALITY_PRESETS, applyMaxBitrate, preferHighQualityCodec, patchSdpBitrate } from '../lib/rtc'
 import { VideoFrame } from './VideoFrame'
 import { StatsBar } from './StatsBar'
 import { StatusDot } from './StatusDot'
@@ -55,15 +55,35 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
       if (pcRef) pcRef.current = pc
       preferHighQualityCodec(pc)
 
+      // Patch SDP para forçar bitrate máximo ANTES da negociação
+      const sdpPreset = QUALITY_PRESETS[qualityRef.current]
+      if (sdpPreset?.maxBitrate) {
+        const origCreateOffer = pc.createOffer.bind(pc)
+        pc.createOffer = async (opts) => {
+          const offer = await origCreateOffer(opts)
+          offer.sdp = patchSdpBitrate(offer.sdp, Math.round(sdpPreset.maxBitrate / 1000))
+          return offer
+        }
+      }
+
       pc.oniceconnectionstatechange = async () => {
         const s = pc.iceConnectionState
         if (s === 'connected' || s === 'completed') {
           setStatus('connected')
           append('stream P2P ativo!', 'ok')
-          const preset = QUALITY_PRESETS[qualityRef.current]
-          if (preset?.maxBitrate) {
-            await applyMaxBitrate(pc, preset.maxBitrate)
-            append(`bitrate: ${Math.round(preset.maxBitrate / 1_000_000)} Mbps`, 'ok')
+          const activePreset = QUALITY_PRESETS[qualityRef.current]
+          if (activePreset?.maxBitrate) {
+            // Aplica imediatamente
+            await applyMaxBitrate(pc, activePreset.maxBitrate)
+            append(`bitrate forçado: ${Math.round(activePreset.maxBitrate / 1_000_000)} Mbps`, 'ok')
+            // Reaplica a cada 3s — o GCC tenta reduzir, a gente força de volta
+            const interval = setInterval(async () => {
+              if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
+                clearInterval(interval)
+                return
+              }
+              await applyMaxBitrate(pc, activePreset.maxBitrate)
+            }, 3000)
           }
         }
         if (s === 'disconnected' || s === 'failed' || s === 'closed') {
