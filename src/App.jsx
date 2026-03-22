@@ -8,12 +8,16 @@ import { Sender } from './components/Sender'
 import { Receiver } from './components/Receiver'
 import { MobileBlock } from './components/MobileBlock'
 
-const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+// TV tem Android no UA mas também tem tela grande — checar TV antes
+const ua = navigator.userAgent
+const isTVua = /\b(TV|SmartTV|SMART-TV|HbbTV|Tizen|WebOS|VIDAA|Viera|NetCast|BRAVIA|Aquos|AndroidTV)\b/i.test(ua)
+const isBigScreen = window.innerWidth >= 1100
+const isMobileUA  = /Android|iPhone|iPad|iPod/i.test(ua)
+
+// Só bloqueia se for mobile E não for TV
+const isMobile = isMobileUA && !isTVua && !isBigScreen
 
 export default function App() {
-  // Bloqueia mobile logo na entrada
-  if (isMobile) return <MobileBlock />
-
   const deviceType = useDeviceType()
   const isTVMode = deviceType === 'tv'
 
@@ -30,6 +34,9 @@ export default function App() {
   useEffect(() => {
     if (isTVMode && phase === 'role_pick') pickRole('receiver')
   }, [isTVMode, phase]) // eslint-disable-line
+
+  // Bloqueia mobile — mas só depois de confirmar que não é TV
+  if (isMobile && !isTVMode) return <MobileBlock />
 
   if (phase === 'ready' && role) {
     return role === 'sender'
