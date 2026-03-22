@@ -76,14 +76,15 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
             // Aplica imediatamente
             await applyMaxBitrate(pc, activePreset.maxBitrate)
             append(`bitrate forçado: ${Math.round(activePreset.maxBitrate / 1_000_000)} Mbps`, 'ok')
-            // Reaplica a cada 3s — o GCC tenta reduzir, a gente força de volta
+            // Reaplica a cada 1.5s para combater o GCC
             const interval = setInterval(async () => {
-              if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') {
+              const state = pc.iceConnectionState
+              if (state !== 'connected' && state !== 'completed') {
                 clearInterval(interval)
                 return
               }
               await applyMaxBitrate(pc, activePreset.maxBitrate)
-            }, 3000)
+            }, 1500)
           }
         }
         if (s === 'disconnected' || s === 'failed' || s === 'closed') {

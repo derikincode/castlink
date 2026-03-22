@@ -58,7 +58,7 @@ export const QUALITY_PRESETS = {
 
 /**
  * Força bitrate via setParameters — chamado após ICE connected.
- * Também define minBitrate para evitar que o GCC reduza demais.
+ * Usa CBR (taxa constante) e desabilita degradação de qualidade.
  */
 export async function applyMaxBitrate(pc, maxBitrateBps) {
   if (!pc || !maxBitrateBps) return
@@ -70,15 +70,28 @@ export async function applyMaxBitrate(pc, maxBitrateBps) {
       if (!params.encodings || params.encodings.length === 0) {
         params.encodings = [{}]
       }
-      params.encodings[0].maxBitrate     = maxBitrateBps
-      // minBitrate evita que o GCC caia muito abaixo
-      params.encodings[0].minBitrate     = Math.round(maxBitrateBps * 0.5)
-      params.encodings[0].priority       = 'high'
-      params.encodings[0].networkPriority = 'high'
+      const enc = params.encodings[0]
+      enc.maxBitrate      = maxBitrateBps
+      enc.minBitrate      = Math.round(maxBitrateBps * 0.7) // mínimo 70%
+      enc.priority        = 'high'
+      enc.networkPriority = 'high'
+      // Prefere reduzir framerate antes de qualidade quando há congestionamento
+      enc.degradationPreference = 'maintain-resolution'
       await sender.setParameters(params)
     } catch (e) {
       console.warn('setParameters falhou:', e)
     }
+
+    // Desabilita detecção de overuse de CPU (Chrome-specific)
+    try {
+      const track = sender.track
+      if (track && track.applyConstraints) {
+        await track.applyConstraints({
+          // Mantém framerate mesmo sob carga de CPU
+          frameRate: { ideal: 60, min: 24 },
+        })
+      }
+    } catch {}
   }
 }
 
