@@ -7,9 +7,7 @@ import { StatsBar } from './StatsBar'
 import { StatusDot } from './StatusDot'
 import { LogPanel } from './LogPanel'
 
-const canShareScreen = !!(navigator.mediaDevices?.getDisplayMedia)
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-const notSupported = isMobile || !canShareScreen
 
 export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
   const [status, setStatus]       = useState('idle')
@@ -35,16 +33,13 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
   }, [connRef]) // eslint-disable-line
 
   const startSharing = async () => {
-    if (notSupported) return
     try {
       const preset = QUALITY_PRESETS[quality]
       append(`capturando tela — ${preset.label}`, 'info')
-
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { ...preset.video, cursor: 'always', displaySurface: 'monitor' },
         audio: { echoCancellation: false, noiseSuppression: false, sampleRate: 48000 },
       })
-
       localStreamRef.current = stream
       if (localVideoRef.current) localVideoRef.current.srcObject = stream
       setSharing(true); setHasStream(true); setStatus('calling')
@@ -58,7 +53,6 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
       const pc = call.peerConnection
       internalPCRef.current = pc
       if (pcRef) pcRef.current = pc
-
       preferHighQualityCodec(pc)
 
       pc.oniceconnectionstatechange = async () => {
@@ -69,7 +63,7 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
           const preset = QUALITY_PRESETS[qualityRef.current]
           if (preset?.maxBitrate) {
             await applyMaxBitrate(pc, preset.maxBitrate)
-            append(`bitrate: ${Math.round(preset.maxBitrate / 1_000_000)} Mbps forçado`, 'ok')
+            append(`bitrate: ${Math.round(preset.maxBitrate / 1_000_000)} Mbps`, 'ok')
           }
         }
         if (s === 'disconnected' || s === 'failed' || s === 'closed') {
@@ -93,57 +87,43 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
     append('transmissão encerrada')
   }, [append])
 
-  const fs = isTVMode ? 16 : 13
-
-  // ── Tela de dispositivo não suportado ────────────────────────────
-  if (notSupported) {
+  // ── Celular: não suportado ───────────────────────────────────────
+  if (isMobile) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', gap: 32, position: 'relative' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', gap: 28, position: 'relative' }}>
         <div aria-hidden style={{ position: 'fixed', inset: 0, backgroundImage: `linear-gradient(rgba(79,70,229,0.04) 1px, transparent 1px),linear-gradient(90deg, rgba(79,70,229,0.04) 1px, transparent 1px)`, backgroundSize: '44px 44px', pointerEvents: 'none' }} />
 
-        <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28, maxWidth: 420, textAlign: 'center' }}>
-          {/* Icon */}
-          <div style={{ width: 72, height: 72, borderRadius: 20, background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="var(--red)">
+        <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, maxWidth: 360, textAlign: 'center' }}>
+          <div style={{ width: 64, height: 64, borderRadius: 18, background: 'rgba(79,70,229,0.1)', border: '1px solid rgba(79,70,229,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--accent-light)">
               <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
             </svg>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Celular não suportado</h2>
+            <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>App necessário</h2>
             <p style={{ fontSize: 14, color: 'var(--text2)', margin: 0, lineHeight: 1.7, fontFamily: 'var(--mono)' }}>
-              Compartilhamento de tela (<code>getDisplayMedia</code>) não está disponível em dispositivos móveis.
+              Transmitir a tela pelo celular requer o app nativo.<br/>Em breve disponível.
             </p>
           </div>
 
-          {/* Instruction box */}
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 14, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, width: '100%' }}>
-            <span style={{ fontSize: 12, color: 'var(--text3)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 1 }}>para transmitir, use</span>
-            {[
-              { icon: '💻', label: 'Chrome no PC ou Mac' },
-              { icon: '🪟', label: 'Edge no Windows' },
-              { icon: '🦊', label: 'Firefox no desktop' },
-            ].map((item) => (
-              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <span style={{ fontSize: 20 }}>{item.icon}</span>
-                <span style={{ fontSize: 14, color: 'var(--text2)' }}>{item.label}</span>
-              </div>
-            ))}
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 12, padding: '16px 20px', width: '100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 1 }}>no celular você pode</span>
+            <span style={{ fontSize: 14, color: 'var(--text2)' }}>📺 Receber transmissões na tela</span>
+            <span style={{ fontSize: 14, color: 'var(--text2)' }}>🔗 Escanear o QR code da TV</span>
           </div>
 
-          <p style={{ fontSize: 13, color: 'var(--text3)', margin: 0, fontFamily: 'var(--mono)' }}>
-            No celular você só pode <strong style={{ color: 'var(--text2)' }}>receber</strong> a transmissão.
-          </p>
-
-          <button onClick={onReset} style={{ padding: '11px 24px', borderRadius: 10, fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border2)', background: 'transparent', color: 'var(--text2)' }}>
-            ← voltar
+          <button onClick={onReset} style={{ padding: '12px 24px', borderRadius: 10, fontFamily: 'var(--sans)', fontSize: 14, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border2)', background: 'transparent', color: 'var(--text2)', width: '100%' }}>
+            ← voltar e escolher Receber
           </button>
         </div>
       </div>
     )
   }
 
-  // ── Tela normal de transmissor ───────────────────────────────────
+  // ── Desktop: transmissor normal ──────────────────────────────────
+  const fs = isTVMode ? 16 : 13
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <div aria-hidden style={{ position: 'fixed', inset: 0, backgroundImage: `linear-gradient(rgba(79,70,229,0.04) 1px, transparent 1px),linear-gradient(90deg, rgba(79,70,229,0.04) 1px, transparent 1px)`, backgroundSize: '44px 44px', pointerEvents: 'none' }} />
