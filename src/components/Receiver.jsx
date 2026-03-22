@@ -6,15 +6,11 @@ import { StatsBar } from './StatsBar'
 import { StatusDot } from './StatusDot'
 import { LogPanel } from './LogPanel'
 
-/**
- * Receiver — recebe peerRef/connRef/callRef/pcRef do useHandshake.
- * Aguarda a chamada de mídia do sender e exibe o stream.
- */
 export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }) {
-  const [status, setStatus]       = useState('waiting')
-  const [hasStream, setHasStream] = useState(false)
+  const [status, setStatus]             = useState('waiting')
+  const [hasStream, setHasStream]       = useState(false)
   const [autoFullscreen, setAutoFullscreen] = useState(true)
-  const [isFullscreen, setIsFullscreen]     = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const remoteVideoRef = useRef(null)
   const internalPCRef  = useRef(null)
@@ -22,7 +18,6 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
   const { entries, append } = useLog()
   const stats = useRTCStats(internalPCRef, hasStream)
 
-  // Track fullscreen changes
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement)
     document.addEventListener('fullscreenchange', handler)
@@ -34,23 +29,19 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
   }, [])
 
   const goFullscreen = useCallback(() => {
-    const v = remoteVideoRef.current
-    if (!v) return
-    const el = v.requestFullscreen ? v : document.documentElement
-    ;(el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el)
+    const el = document.documentElement
+    ;(el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen)?.call(el)
   }, [])
 
-  // Register incoming call handler on peerRef
   useEffect(() => {
     const peer = peerRef?.current
     if (!peer) return
-
-    append('aguardando stream do transmissor...', 'info')
+    append('aguardando stream...', 'info')
 
     const handleCall = (call) => {
       append('recebendo chamada...', 'info')
       call.answer()
-      callRef && (callRef.current = call)
+      if (callRef) callRef.current = call
 
       call.on('stream', (remoteStream) => {
         const v = remoteVideoRef.current
@@ -80,84 +71,128 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
     return () => { try { peer.off('call', handleCall) } catch {} }
   }, [peerRef?.current, autoFullscreen, goFullscreen]) // eslint-disable-line
 
-  const fs = isTVMode ? 16 : 13
+  // ── TV MODE ─────────────────────────────────────────────────────────
+  if (isTVMode) {
+    return (
+      <div style={{
+        height: '100vh', display: 'grid',
+        gridTemplateRows: 'auto 1fr auto',
+        padding: '28px 48px',
+        position: 'relative', overflow: 'hidden',
+      }}>
+        {/* bg grid */}
+        <div aria-hidden style={{
+          position: 'fixed', inset: 0,
+          backgroundImage: `linear-gradient(rgba(79,70,229,0.04) 1px, transparent 1px),linear-gradient(90deg, rgba(79,70,229,0.04) 1px, transparent 1px)`,
+          backgroundSize: '44px 44px', pointerEvents: 'none',
+        }} />
 
-  return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <div aria-hidden style={{
-        position: 'fixed', inset: 0,
-        backgroundImage: `linear-gradient(rgba(79,70,229,0.04) 1px, transparent 1px),linear-gradient(90deg, rgba(79,70,229,0.04) 1px, transparent 1px)`,
-        backgroundSize: '44px 44px', pointerEvents: 'none',
-      }} />
-
-      <div style={{ maxWidth: 900, width: '100%', margin: '0 auto', padding: isTVMode ? '2rem 2.5rem' : '2rem 1.5rem', display: 'flex', flexDirection: 'column', gap: isTVMode ? 24 : 16, position: 'relative', zIndex: 1 }}>
-
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Top bar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative', zIndex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 32, height: 32, background: 'var(--green)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+            <div style={{ width: 36, height: 36, background: 'var(--green)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
             </div>
-            <span style={{ fontSize: isTVMode ? 20 : 16, fontWeight: 700 }}>CastLink</span>
-            <span style={{ fontSize: isTVMode ? 13 : 11, fontFamily: 'var(--mono)', color: 'var(--green)', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', padding: '3px 10px', borderRadius: 99 }}>receptor</span>
+            <span style={{ fontSize: 22, fontWeight: 800 }}>CastLink</span>
+            <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--green)', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', padding: '2px 10px', borderRadius: 99 }}>receptor</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <StatusDot status={status === 'receiving' ? 'connected' : status === 'waiting' ? 'connecting' : 'error'} />
-            <span style={{ fontSize: isTVMode ? 14 : 11, fontFamily: 'var(--mono)', color: 'var(--text3)' }}>
-              {status === 'waiting' && 'aguardando stream'}
-              {status === 'receiving' && 'recebendo'}
-              {status === 'error' && 'erro'}
-            </span>
-            <button onClick={onReset} style={{ fontSize: isTVMode ? 13 : 11, fontFamily: 'var(--mono)', background: 'transparent', border: '1px solid var(--border2)', color: 'var(--text3)', padding: isTVMode ? '8px 16px' : '5px 12px', borderRadius: 8, cursor: 'pointer' }}>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            {/* Status pill */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 99, padding: '6px 16px' }}>
+              <div style={{ width: 7, height: 7, borderRadius: '50%', background: status === 'receiving' ? 'var(--green)' : 'var(--amber)', animation: 'pulse 1.4s ease-in-out infinite' }} />
+              <span style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--text2)' }}>
+                {status === 'waiting' ? 'aguardando transmissão' : 'recebendo stream'}
+              </span>
+            </div>
+            <button onClick={onReset} style={{ fontSize: 12, fontFamily: 'var(--mono)', background: 'transparent', border: '1px solid var(--border2)', color: 'var(--text3)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }}>
               ✕ sair
             </button>
           </div>
         </div>
 
-        {/* Auto fullscreen toggle */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
-          <div onClick={() => setAutoFullscreen(v => !v)} style={{
-            width: isTVMode ? 44 : 36, height: isTVMode ? 24 : 20,
-            background: autoFullscreen ? 'var(--accent)' : 'var(--surface3)',
-            borderRadius: 99, position: 'relative', transition: 'background 0.2s', cursor: 'pointer', flexShrink: 0,
-          }}>
-            <div style={{
-              position: 'absolute', top: isTVMode ? 3 : 2,
-              left: autoFullscreen ? (isTVMode ? 23 : 18) : (isTVMode ? 3 : 2),
-              width: isTVMode ? 18 : 16, height: isTVMode ? 18 : 16,
-              background: '#fff', borderRadius: '50%', transition: 'left 0.2s',
-            }} />
+        {/* Center — waiting state or video */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 1 }}>
+          {!hasStream ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28 }}>
+              {/* Animated icon */}
+              <div style={{ position: 'relative', width: 100, height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ position: 'absolute', width: 100, height: 100, borderRadius: '50%', border: '2px solid rgba(16,185,129,0.2)', animation: 'pulse 2s ease-in-out infinite' }} />
+                <div style={{ position: 'absolute', width: 70, height: 70, borderRadius: '50%', border: '2px solid rgba(16,185,129,0.35)', animation: 'pulse 2s 0.3s ease-in-out infinite' }} />
+                <div style={{ width: 50, height: 50, borderRadius: '50%', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="var(--green)"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+                </div>
+              </div>
+              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <span style={{ fontSize: 28, fontWeight: 700, color: 'var(--text)' }}>Aguardando transmissão</span>
+                <span style={{ fontSize: 15, color: 'var(--text3)', fontFamily: 'var(--mono)' }}>Inicie o compartilhamento no outro dispositivo</span>
+              </div>
+            </div>
+          ) : (
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: 12 }}
+            />
+          )}
+        </div>
+
+        {/* Bottom bar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative', zIndex: 1 }}>
+          {hasStream
+            ? <StatsBar stats={stats} videoEl={remoteVideoRef.current} tvMode />
+            : <div />
+          }
+          {hasStream && !isFullscreen && (
+            <button onClick={goFullscreen} style={{ fontSize: 13, fontFamily: 'var(--mono)', background: 'var(--accent)', border: 'none', color: '#fff', padding: '10px 22px', borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>
+              ⛶ tela cheia
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── PC MODE ─────────────────────────────────────────────────────────
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <div aria-hidden style={{ position: 'fixed', inset: 0, backgroundImage: `linear-gradient(rgba(79,70,229,0.04) 1px, transparent 1px),linear-gradient(90deg, rgba(79,70,229,0.04) 1px, transparent 1px)`, backgroundSize: '44px 44px', pointerEvents: 'none' }} />
+
+      <div style={{ maxWidth: 900, width: '100%', margin: '0 auto', padding: '2rem 1.5rem', display: 'flex', flexDirection: 'column', gap: 16, position: 'relative', zIndex: 1 }}>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 28, height: 28, background: 'var(--green)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+            </div>
+            <span style={{ fontSize: 15, fontWeight: 700 }}>CastLink</span>
+            <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--green)', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', padding: '2px 8px', borderRadius: 99 }}>receptor</span>
           </div>
-          <span style={{ fontSize: isTVMode ? 14 : 11, color: 'var(--text2)', fontFamily: 'var(--mono)' }}>
-            fullscreen automático ao receber stream
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <StatusDot status={status === 'receiving' ? 'connected' : 'connecting'} />
+            <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--text3)' }}>
+              {status === 'waiting' ? 'aguardando stream' : 'recebendo'}
+            </span>
+            <button onClick={onReset} style={{ fontSize: 11, fontFamily: 'var(--mono)', background: 'transparent', border: '1px solid var(--border2)', color: 'var(--text3)', padding: '5px 10px', borderRadius: 7, cursor: 'pointer', marginLeft: 4 }}>✕ sair</button>
+          </div>
+        </div>
+
+        {/* Toggle fullscreen auto */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+          <div onClick={() => setAutoFullscreen(v => !v)} style={{ width: 34, height: 19, background: autoFullscreen ? 'var(--accent)' : 'var(--surface3)', borderRadius: 99, position: 'relative', transition: 'background 0.2s', cursor: 'pointer', flexShrink: 0 }}>
+            <div style={{ position: 'absolute', top: 2, left: autoFullscreen ? 17 : 2, width: 15, height: 15, background: '#fff', borderRadius: '50%', transition: 'left 0.2s' }} />
+          </div>
+          <span style={{ fontSize: 11, color: 'var(--text2)', fontFamily: 'var(--mono)' }}>fullscreen automático</span>
         </label>
 
-        {/* Video */}
-        <VideoFrame
-          ref={remoteVideoRef}
-          hasStream={hasStream}
-          placeholderText={status === 'waiting' ? 'aguardando transmissor iniciar...' : 'stream encerrado'}
-          type="remote"
-          onFullscreen={!isFullscreen && hasStream ? goFullscreen : undefined}
-          tvMode={isTVMode}
-        />
-
-        {hasStream && <StatsBar stats={stats} videoEl={remoteVideoRef.current} tvMode={isTVMode} />}
-
-        {/* Fullscreen button if not already in fs */}
+        <VideoFrame ref={remoteVideoRef} hasStream={hasStream} placeholderText="aguardando transmissor iniciar..." type="remote" onFullscreen={!isFullscreen && hasStream ? goFullscreen : undefined} />
+        {hasStream && <StatsBar stats={stats} videoEl={remoteVideoRef.current} />}
         {hasStream && !isFullscreen && (
-          <button onClick={goFullscreen} style={{
-            alignSelf: 'flex-start',
-            padding: isTVMode ? '14px 28px' : '11px 20px',
-            borderRadius: 10, fontFamily: 'var(--sans)',
-            fontSize: fs, fontWeight: 600, cursor: 'pointer',
-            border: 'none', background: 'var(--accent)', color: '#fff',
-          }}>
-            ⛶ {isTVMode ? 'abrir em tela cheia' : 'fullscreen'}
+          <button onClick={goFullscreen} style={{ alignSelf: 'flex-start', padding: '10px 18px', borderRadius: 10, fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff' }}>
+            ⛶ fullscreen
           </button>
         )}
-
         <LogPanel entries={entries} />
       </div>
     </div>
