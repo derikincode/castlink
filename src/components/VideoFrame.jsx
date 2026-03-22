@@ -1,25 +1,25 @@
 import React, { forwardRef } from 'react'
 
-const PlaceholderIcon = ({ type }) =>
+const PlaceholderIcon = ({ type, size = 44 }) =>
   type === 'screen' ? (
-    <svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.25 }}>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.25 }}>
       <path d="M20 3H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h6l-2 3v1h8v-1l-2-3h6c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 13H4V5h16v11z" />
     </svg>
   ) : (
-    <svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.25 }}>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.25 }}>
       <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
     </svg>
   )
 
 export const VideoFrame = forwardRef(function VideoFrame(
-  { hasStream, placeholderText, type = 'screen', muted = false, onFullscreen },
+  { hasStream, placeholderText, type = 'screen', muted = false, onFullscreen, tvMode = false },
   ref
 ) {
   return (
     <div
       style={{
         background: '#000',
-        borderRadius: 10,
+        borderRadius: tvMode ? 14 : 10,
         overflow: 'hidden',
         position: 'relative',
         aspectRatio: '16/9',
@@ -37,14 +37,14 @@ export const VideoFrame = forwardRef(function VideoFrame(
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: 12,
+            gap: 16,
             color: 'var(--text3)',
-            fontSize: 13,
+            fontSize: tvMode ? 18 : 13,
             fontFamily: 'var(--mono)',
             pointerEvents: 'none',
           }}
         >
-          <PlaceholderIcon type={type} />
+          <PlaceholderIcon type={type} size={tvMode ? 64 : 44} />
           <span>{placeholderText}</span>
         </div>
       )}
@@ -66,20 +66,20 @@ export const VideoFrame = forwardRef(function VideoFrame(
           onClick={onFullscreen}
           style={{
             position: 'absolute',
-            bottom: 10,
-            right: 10,
-            fontSize: 12,
+            bottom: tvMode ? 16 : 10,
+            right: tvMode ? 16 : 10,
+            fontSize: tvMode ? 16 : 12,
             fontFamily: 'var(--mono)',
-            background: 'rgba(0,0,0,0.55)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            color: 'rgba(255,255,255,0.7)',
-            padding: '5px 10px',
-            borderRadius: 6,
+            background: 'rgba(0,0,0,0.6)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            color: 'rgba(255,255,255,0.8)',
+            padding: tvMode ? '10px 18px' : '5px 10px',
+            borderRadius: tvMode ? 10 : 6,
             cursor: 'pointer',
             backdropFilter: 'blur(4px)',
           }}
         >
-          ⛶ fullscreen
+          ⛶ {tvMode ? 'tela cheia' : 'fullscreen'}
         </button>
       )}
     </div>

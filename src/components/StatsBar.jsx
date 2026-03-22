@@ -1,6 +1,6 @@
 import React from 'react'
 
-function Chip({ label, value }) {
+function Chip({ label, value, tvMode }) {
   return (
     <div
       style={{
@@ -9,9 +9,9 @@ function Chip({ label, value }) {
         gap: 6,
         background: 'var(--surface2)',
         border: '1px solid var(--border)',
-        borderRadius: 6,
-        padding: '5px 10px',
-        fontSize: 12,
+        borderRadius: tvMode ? 8 : 6,
+        padding: tvMode ? '8px 14px' : '5px 10px',
+        fontSize: tvMode ? 14 : 12,
         fontFamily: 'var(--mono)',
       }}
     >
@@ -21,22 +21,35 @@ function Chip({ label, value }) {
   )
 }
 
-export function StatsBar({ stats, videoEl }) {
-  const res =
-    videoEl?.videoWidth
-      ? `${videoEl.videoWidth}×${videoEl.videoHeight}`
-      : undefined
+export function StatsBar({ stats, videoEl, tvMode = false }) {
+  const res = videoEl?.videoWidth ? `${videoEl.videoWidth}×${videoEl.videoHeight}` : undefined
+
+  const qualityColor =
+    stats?.qualityScore === 'none' ? 'var(--green)'
+    : stats?.qualityScore === 'bandwidth' ? 'var(--amber)'
+    : stats?.qualityScore ? 'var(--red)'
+    : undefined
 
   return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-      <Chip label="resolução" value={res} />
-      <Chip label="fps" value={stats?.fps} />
-      <Chip
-        label="bitrate"
-        value={stats?.kbps ? `${stats.kbps} kbps` : undefined}
-      />
-      {stats?.rtt !== undefined && (
-        <Chip label="latência" value={`${stats.rtt}ms`} />
+    <div style={{ display: 'flex', gap: tvMode ? 10 : 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <Chip label="res" value={res} tvMode={tvMode} />
+      <Chip label="fps" value={stats?.fps} tvMode={tvMode} />
+      <Chip label="bitrate" value={stats?.kbps ? `${stats.kbps} kbps` : undefined} tvMode={tvMode} />
+      {stats?.rtt !== undefined && <Chip label="rtt" value={`${stats.rtt}ms`} tvMode={tvMode} />}
+      {stats?.jitter !== undefined && <Chip label="jitter" value={`${stats.jitter}ms`} tvMode={tvMode} />}
+      {stats?.qualityScore && (
+        <div style={{
+          fontSize: tvMode ? 13 : 11,
+          fontFamily: 'var(--mono)',
+          color: qualityColor,
+          padding: tvMode ? '8px 12px' : '5px 8px',
+          background: 'var(--surface2)',
+          border: `1px solid ${qualityColor ?? 'var(--border)'}`,
+          borderRadius: tvMode ? 8 : 6,
+          opacity: 0.9,
+        }}>
+          limite: {stats.qualityScore}
+        </div>
       )}
     </div>
   )
