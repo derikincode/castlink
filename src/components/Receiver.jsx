@@ -168,7 +168,7 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
         )}
 
         {/* Center — vídeo SEMPRE montado, só muda o estilo */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 1, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', justifyContent: 'center', position: 'relative', zIndex: 1, minHeight: 0 }}>
 
           {/* Vídeo permanece montado o tempo todo */}
           <video
@@ -181,9 +181,10 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
               objectFit: 'contain', background: '#000',
               zIndex: 9998, display: 'block',
             } : {
-              width: '100%', maxWidth: '100%',
-              maxHeight: '60vh',
-              objectFit: 'contain', background: '#000',
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              background: '#000',
               borderRadius: 12,
               display: hasStream && !needsPlay ? 'block' : 'none',
             }}
