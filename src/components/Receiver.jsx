@@ -128,7 +128,14 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <video
-          ref={remoteVideoRef}
+          ref={(el) => {
+            remoteVideoRef.current = el
+            // Reatribui o stream e força play sempre que o elemento montar
+            if (el && remoteStreamRef.current) {
+              el.srcObject = remoteStreamRef.current
+              el.play().catch(() => {})
+            }
+          }}
           autoPlay
           playsInline
           style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
