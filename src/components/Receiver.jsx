@@ -1,46 +1,26 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
-import { usePeer } from '../hooks/usePeer'
 import { useRTCStats } from '../hooks/useRTCStats'
 import { useLog } from '../hooks/useLog'
-import { receiverPeerId, senderPeerId } from '../lib/rtc'
 import { VideoFrame } from './VideoFrame'
 import { StatsBar } from './StatsBar'
 import { StatusDot } from './StatusDot'
 import { LogPanel } from './LogPanel'
 
-// Detecta se está numa TV (tela grande + sem mouse preciso)
-function useIsTVMode() {
-  const [tvMode, setTvMode] = useState(false)
-  useEffect(() => {
-    const check = () => {
-      // TV: tela >= 1280px + pointer grosso (remote/touch)
-      const bigScreen = window.innerWidth >= 1100
-      const coarsePointer = window.matchMedia('(pointer: coarse)').matches
-      const veryBig = window.innerWidth >= 1600
-      setTvMode(veryBig || (bigScreen && coarsePointer))
-    }
-    check()
-    window.addEventListener('resize', check)
-    return () => window.removeEventListener('resize', check)
-  }, [])
-  return tvMode
-}
-
-export function Receiver() {
-  const [inputCode, setInputCode] = useState('')
-  const [status, setStatus] = useState('idle')
-  const [joined, setJoined] = useState(false)
+/**
+ * Receiver — recebe peerRef/connRef/callRef/pcRef do useHandshake.
+ * Aguarda a chamada de mídia do sender e exibe o stream.
+ */
+export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }) {
+  const [status, setStatus]       = useState('waiting')
   const [hasStream, setHasStream] = useState(false)
   const [autoFullscreen, setAutoFullscreen] = useState(true)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isFullscreen, setIsFullscreen]     = useState(false)
 
   const remoteVideoRef = useRef(null)
-  const pcRef = useRef(null)
-  const destroyRef = useRef(null)
+  const internalPCRef  = useRef(null)
 
-  const { entries, append, reset } = useLog()
-  const stats = useRTCStats(pcRef, hasStream)
-  const isTVMode = useIsTVMode()
+  const { entries, append } = useLog()
+  const stats = useRTCStats(internalPCRef, hasStream)
 
   // Track fullscreen changes
   useEffect(() => {
@@ -57,244 +37,129 @@ export function Receiver() {
     const v = remoteVideoRef.current
     if (!v) return
     const el = v.requestFullscreen ? v : document.documentElement
-    if (el.requestFullscreen) el.requestFullscreen()
-    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen()
-    else if (el.mozRequestFullScreen) el.mozRequestFullScreen()
+    ;(el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el)
   }, [])
 
-  const exitFullscreen = useCallback(() => {
-    if (document.fullscreenElement) document.exitFullscreen()
-  }, [])
+  // Register incoming call handler on peerRef
+  useEffect(() => {
+    const peer = peerRef?.current
+    if (!peer) return
 
-  const handleCall = useCallback(
-    (call) => {
-      append('recebendo chamada do transmissor...', 'info')
+    append('aguardando stream do transmissor...', 'info')
+
+    const handleCall = (call) => {
+      append('recebendo chamada...', 'info')
       call.answer()
+      callRef && (callRef.current = call)
 
       call.on('stream', (remoteStream) => {
         const v = remoteVideoRef.current
-        if (v) {
-          v.srcObject = remoteStream
-          // Garante play mesmo em contextos restritivos
-          v.play().catch(() => {})
-        }
+        if (v) { v.srcObject = remoteStream; v.play().catch(() => {}) }
         setHasStream(true)
-        setStatus('connected')
+        setStatus('receiving')
         append('stream recebido!', 'ok')
-        pcRef.current = call.peerConnection
-
-        // Auto fullscreen em TV mode
-        if (autoFullscreen) {
-          setTimeout(goFullscreen, 500)
-        }
+        internalPCRef.current = call.peerConnection
+        if (pcRef) pcRef.current = call.peerConnection
+        if (autoFullscreen) setTimeout(goFullscreen, 500)
       })
 
-      call.on('error', (e) => {
-        append(`erro na chamada: ${e}`, 'err')
-        setStatus('error')
-      })
+      call.on('error', (e) => { append(`erro: ${e}`, 'err'); setStatus('error') })
 
       call.peerConnection.oniceconnectionstatechange = () => {
         const s = call.peerConnection.iceConnectionState
         if (s === 'disconnected' || s === 'failed' || s === 'closed') {
-          setStatus('idle')
-          setHasStream(false)
+          setStatus('waiting'); setHasStream(false)
           if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
-          append('transmissor desconectou')
           if (document.fullscreenElement) document.exitFullscreen()
+          append('transmissor desconectou')
         }
       }
-    },
-    [append, autoFullscreen, goFullscreen]
-  )
+    }
 
-  const joinRoom = () => {
-    const code = inputCode.trim().toUpperCase()
-    if (code.length !== 6) { append('código deve ter 6 caracteres', 'err'); return }
-    setStatus('connecting')
-    setJoined(true)
-    append(`conectando à sala ${code}...`, 'info')
-  }
+    peer.on('call', handleCall)
+    return () => { try { peer.off('call', handleCall) } catch {} }
+  }, [peerRef?.current, autoFullscreen, goFullscreen]) // eslint-disable-line
 
-  const { peerRef, destroy } = usePeer({
-    peerId: joined ? receiverPeerId(inputCode.trim().toUpperCase()) : null,
-    onReady: () => {
-      const code = inputCode.trim().toUpperCase()
-      append('conectado ao servidor de sinalização', 'ok')
-      const dc = peerRef.current?.connect(senderPeerId(code))
-      if (dc) {
-        dc.on('open', () => { dc.send({ type: 'ready' }); append('aguardando stream...', 'info') })
-        dc.on('error', () => { append('transmissor não encontrado — verifique o código', 'err'); setStatus('error') })
-      }
-    },
-    onError: (err) => {
-      append(`erro: ${err.type} — verifique o código`, 'err')
-      setStatus('error')
-      setJoined(false)
-    },
-    onCall: handleCall,
-  })
-
-  destroyRef.current = destroy
-
-  const leaveRoom = useCallback(() => {
-    destroyRef.current?.()
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
-    if (document.fullscreenElement) document.exitFullscreen()
-    setJoined(false); setHasStream(false); setStatus('idle')
-    setInputCode(''); pcRef.current = null
-    reset('desconectado')
-  }, [reset])
-
-  // Handle individual digit input for TV mode (easier with remote)
-  const digits = inputCode.split('').concat(Array(6).fill('')).slice(0, 6)
-
-  const fontSize = isTVMode ? 18 : 13
+  const fs = isTVMode ? 16 : 13
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: isTVMode ? 24 : 16 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: fontSize, fontWeight: 600 }}>receptor</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <StatusDot status={status} />
-          <span style={{ fontSize: isTVMode ? 14 : 11, fontFamily: 'var(--mono)', color: 'var(--text3)' }}>
-            {status === 'idle' && 'aguardando'}
-            {status === 'connecting' && 'conectando...'}
-            {status === 'connected' && 'recebendo stream'}
-            {status === 'error' && 'erro'}
-          </span>
-        </div>
-      </div>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <div aria-hidden style={{
+        position: 'fixed', inset: 0,
+        backgroundImage: `linear-gradient(rgba(79,70,229,0.04) 1px, transparent 1px),linear-gradient(90deg, rgba(79,70,229,0.04) 1px, transparent 1px)`,
+        backgroundSize: '44px 44px', pointerEvents: 'none',
+      }} />
 
-      {/* Code input — TV mode shows big digit boxes */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <label style={{ fontSize: isTVMode ? 14 : 11, color: 'var(--text3)', fontFamily: 'var(--mono)' }}>
-          código da sala (6 letras/números)
+      <div style={{ maxWidth: 900, width: '100%', margin: '0 auto', padding: isTVMode ? '2rem 2.5rem' : '2rem 1.5rem', display: 'flex', flexDirection: 'column', gap: isTVMode ? 24 : 16, position: 'relative', zIndex: 1 }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 32, height: 32, background: 'var(--green)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+            </div>
+            <span style={{ fontSize: isTVMode ? 20 : 16, fontWeight: 700 }}>CastLink</span>
+            <span style={{ fontSize: isTVMode ? 13 : 11, fontFamily: 'var(--mono)', color: 'var(--green)', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', padding: '3px 10px', borderRadius: 99 }}>receptor</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <StatusDot status={status === 'receiving' ? 'connected' : status === 'waiting' ? 'connecting' : 'error'} />
+            <span style={{ fontSize: isTVMode ? 14 : 11, fontFamily: 'var(--mono)', color: 'var(--text3)' }}>
+              {status === 'waiting' && 'aguardando stream'}
+              {status === 'receiving' && 'recebendo'}
+              {status === 'error' && 'erro'}
+            </span>
+            <button onClick={onReset} style={{ fontSize: isTVMode ? 13 : 11, fontFamily: 'var(--mono)', background: 'transparent', border: '1px solid var(--border2)', color: 'var(--text3)', padding: isTVMode ? '8px 16px' : '5px 12px', borderRadius: 8, cursor: 'pointer' }}>
+              ✕ sair
+            </button>
+          </div>
+        </div>
+
+        {/* Auto fullscreen toggle */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
+          <div onClick={() => setAutoFullscreen(v => !v)} style={{
+            width: isTVMode ? 44 : 36, height: isTVMode ? 24 : 20,
+            background: autoFullscreen ? 'var(--accent)' : 'var(--surface3)',
+            borderRadius: 99, position: 'relative', transition: 'background 0.2s', cursor: 'pointer', flexShrink: 0,
+          }}>
+            <div style={{
+              position: 'absolute', top: isTVMode ? 3 : 2,
+              left: autoFullscreen ? (isTVMode ? 23 : 18) : (isTVMode ? 3 : 2),
+              width: isTVMode ? 18 : 16, height: isTVMode ? 18 : 16,
+              background: '#fff', borderRadius: '50%', transition: 'left 0.2s',
+            }} />
+          </div>
+          <span style={{ fontSize: isTVMode ? 14 : 11, color: 'var(--text2)', fontFamily: 'var(--mono)' }}>
+            fullscreen automático ao receber stream
+          </span>
         </label>
 
-        {isTVMode ? (
-          /* TV: large single input centered */
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'flex-start' }}>
-            <input
-              type="text"
-              value={inputCode}
-              onChange={(e) => setInputCode(e.target.value.toUpperCase())}
-              maxLength={6}
-              placeholder="XXXXXX"
-              disabled={joined}
-              autoCapitalize="characters"
-              style={{
-                ...inputBase,
-                fontSize: 36,
-                letterSpacing: 14,
-                padding: '18px 24px',
-                width: 320,
-                height: 80,
-              }}
-            />
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              {!joined
-                ? <button onClick={joinRoom} style={{ ...btnPrimary, fontSize: 16, padding: '16px 32px', borderRadius: 12 }}>conectar</button>
-                : <button onClick={leaveRoom} style={{ ...btnDanger, fontSize: 16, padding: '16px 32px', borderRadius: 12 }}>desconectar</button>
-              }
-              {hasStream && !isFullscreen && (
-                <button onClick={goFullscreen} style={{ ...btnGhost, fontSize: 16, padding: '16px 28px', borderRadius: 12 }}>
-                  ⛶ tela cheia
-                </button>
-              )}
-            </div>
-          </div>
-        ) : (
-          /* Desktop: compact row */
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <input
-              type="text"
-              value={inputCode}
-              onChange={(e) => setInputCode(e.target.value.toUpperCase())}
-              maxLength={6}
-              placeholder="XXXXXX"
-              disabled={joined}
-              style={{ ...inputBase, fontSize: 22, letterSpacing: 6, width: 190, padding: '10px 14px' }}
-            />
-            {!joined
-              ? <button onClick={joinRoom} style={btnPrimary}>conectar</button>
-              : <button onClick={leaveRoom} style={btnDanger}>desconectar</button>
-            }
-          </div>
+        {/* Video */}
+        <VideoFrame
+          ref={remoteVideoRef}
+          hasStream={hasStream}
+          placeholderText={status === 'waiting' ? 'aguardando transmissor iniciar...' : 'stream encerrado'}
+          type="remote"
+          onFullscreen={!isFullscreen && hasStream ? goFullscreen : undefined}
+          tvMode={isTVMode}
+        />
+
+        {hasStream && <StatsBar stats={stats} videoEl={remoteVideoRef.current} tvMode={isTVMode} />}
+
+        {/* Fullscreen button if not already in fs */}
+        {hasStream && !isFullscreen && (
+          <button onClick={goFullscreen} style={{
+            alignSelf: 'flex-start',
+            padding: isTVMode ? '14px 28px' : '11px 20px',
+            borderRadius: 10, fontFamily: 'var(--sans)',
+            fontSize: fs, fontWeight: 600, cursor: 'pointer',
+            border: 'none', background: 'var(--accent)', color: '#fff',
+          }}>
+            ⛶ {isTVMode ? 'abrir em tela cheia' : 'fullscreen'}
+          </button>
         )}
+
+        <LogPanel entries={entries} />
       </div>
-
-      {/* Auto fullscreen toggle */}
-      <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
-        <div
-          onClick={() => setAutoFullscreen((v) => !v)}
-          style={{
-            width: isTVMode ? 44 : 36,
-            height: isTVMode ? 24 : 20,
-            background: autoFullscreen ? 'var(--accent)' : 'var(--surface3)',
-            borderRadius: 99,
-            position: 'relative',
-            transition: 'background 0.2s',
-            flexShrink: 0,
-            cursor: 'pointer',
-          }}
-        >
-          <div style={{
-            position: 'absolute',
-            top: isTVMode ? 3 : 2,
-            left: autoFullscreen ? (isTVMode ? 23 : 18) : (isTVMode ? 3 : 2),
-            width: isTVMode ? 18 : 16,
-            height: isTVMode ? 18 : 16,
-            background: '#fff',
-            borderRadius: '50%',
-            transition: 'left 0.2s',
-          }} />
-        </div>
-        <span style={{ fontSize: isTVMode ? 14 : 11, color: 'var(--text2)', fontFamily: 'var(--mono)' }}>
-          fullscreen automático ao receber stream
-        </span>
-      </label>
-
-      {/* Remote video */}
-      <VideoFrame
-        ref={remoteVideoRef}
-        hasStream={hasStream}
-        placeholderText="aguardando transmissão..."
-        type="remote"
-        onFullscreen={!isFullscreen ? goFullscreen : undefined}
-        tvMode={isTVMode}
-      />
-
-      {hasStream && <StatsBar stats={stats} videoEl={remoteVideoRef.current} tvMode={isTVMode} />}
-      <LogPanel entries={entries} />
     </div>
   )
-}
-
-const inputBase = {
-  background: 'var(--surface2)',
-  border: '1px solid var(--border2)',
-  borderRadius: 8,
-  color: 'var(--text)',
-  fontFamily: 'var(--mono)',
-  fontWeight: 700,
-  outline: 'none',
-}
-
-const btnPrimary = {
-  display: 'inline-flex', alignItems: 'center', gap: 8,
-  padding: '11px 20px', borderRadius: 10,
-  fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 600,
-  cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff',
-}
-
-const btnDanger = {
-  ...btnPrimary,
-  background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', color: 'var(--red)',
-}
-
-const btnGhost = {
-  ...btnPrimary,
-  background: 'var(--surface2)', border: '1px solid var(--border2)', color: 'var(--text2)',
 }
