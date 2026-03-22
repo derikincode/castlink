@@ -9,17 +9,30 @@ import { LogPanel } from './LogPanel'
 
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
-export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
-  const [status, setStatus]       = useState('idle')
-  const [sharing, setSharing]     = useState(false)
-  const [hasStream, setHasStream] = useState(false)
-  const [quality, setQuality]     = useState('hd')
+// Hierarquia de downgrade: qhd → hd → performance → performance (mínimo)
+const DOWNGRADE_MAP = { qhd: 'hd', hd: 'performance', performance: 'performance' }
+const UPGRADE_MAP   = { performance: 'hd', hd: 'qhd', qhd: 'qhd' }
 
-  const localVideoRef  = useRef(null)
-  const localStreamRef = useRef(null)
-  const internalPCRef  = useRef(null)
-  const qualityRef     = useRef('hd')
-  qualityRef.current   = quality
+export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
+  const [status, setStatus]         = useState('idle')
+  const [sharing, setSharing]       = useState(false)
+  const [hasStream, setHasStream]   = useState(false)
+  const [quality, setQuality]       = useState('hd')
+  const [autoQuality, setAutoQuality] = useState(true)
+  const [autoMsg, setAutoMsg]       = useState(null) // feedback do ajuste automático
+
+  const localVideoRef   = useRef(null)
+  const localStreamRef  = useRef(null)
+  const internalPCRef   = useRef(null)
+  const qualityRef      = useRef('hd')
+  const bitrateInterval = useRef(null)
+  const qualityMonitor  = useRef(null)
+  const badFramesCount  = useRef(0)
+  const goodFramesCount = useRef(0)
+  const autoQualityRef  = useRef(true)
+
+  qualityRef.current    = quality
+  autoQualityRef.current = autoQuality
 
   const { entries, append } = useLog()
   const stats = useRTCStats(internalPCRef, sharing)
@@ -31,6 +44,93 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
     conn.on('data', handler)
     return () => { try { conn.off('data', handler) } catch {} }
   }, [connRef]) // eslint-disable-line
+
+  // Mostra feedback de ajuste automático por 3s
+  const showAutoMsg = (msg, type) => {
+    setAutoMsg({ msg, type })
+    setTimeout(() => setAutoMsg(null), 3000)
+  }
+
+  // Monitor de qualidade — verifica FPS e bitrate e ajusta preset
+  const startQualityMonitor = useCallback((pc) => {
+    let prevBytes = 0
+    let prevTime  = Date.now()
+
+    qualityMonitor.current = setInterval(async () => {
+      if (!autoQualityRef.current) return
+      if (!pc || (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed')) return
+
+      try {
+        const rtcStats = await pc.getStats()
+        let fps = 0
+        let bytes = 0
+
+        rtcStats.forEach((r) => {
+          if (r.type === 'outbound-rtp' && r.mediaType === 'video') {
+            fps   = r.framesPerSecond ?? 0
+            bytes = r.bytesSent ?? 0
+          }
+        })
+
+        const now      = Date.now()
+        const elapsed  = (now - prevTime) / 1000
+        const kbps     = elapsed > 0 ? Math.round(((bytes - prevBytes) * 8) / elapsed / 1000) : 0
+        prevBytes = bytes
+        prevTime  = now
+
+        const currentKey = qualityRef.current
+        const preset     = QUALITY_PRESETS[currentKey]
+        const maxKbps    = preset?.maxBitrate ? preset.maxBitrate / 1000 : 99999
+
+        // Condição ruim: FPS < 20 ou bitrate < 30% do esperado
+        const isBad  = fps > 0 && (fps < 20 || kbps < maxKbps * 0.3)
+        // Condição boa: FPS >= 28 e bitrate >= 70% por 5 ciclos consecutivos
+        const isGood = fps >= 28 && kbps >= maxKbps * 0.7
+
+        if (isBad) {
+          badFramesCount.current++
+          goodFramesCount.current = 0
+          if (badFramesCount.current >= 3) {
+            badFramesCount.current = 0
+            const next = DOWNGRADE_MAP[currentKey]
+            if (next !== currentKey) {
+              setQuality(next)
+              qualityRef.current = next
+              await applyMaxBitrate(pc, QUALITY_PRESETS[next].maxBitrate)
+              showAutoMsg(`⬇ qualidade reduzida para ${QUALITY_PRESETS[next].label}`, 'warn')
+              append(`auto: reduzindo para ${QUALITY_PRESETS[next].label} (fps=${Math.round(fps)}, ${kbps}kbps)`, 'info')
+            }
+          }
+        } else if (isGood) {
+          goodFramesCount.current++
+          badFramesCount.current = 0
+          if (goodFramesCount.current >= 5) {
+            goodFramesCount.current = 0
+            const next = UPGRADE_MAP[currentKey]
+            if (next !== currentKey) {
+              setQuality(next)
+              qualityRef.current = next
+              await applyMaxBitrate(pc, QUALITY_PRESETS[next].maxBitrate)
+              showAutoMsg(`⬆ qualidade melhorada para ${QUALITY_PRESETS[next].label}`, 'ok')
+              append(`auto: subindo para ${QUALITY_PRESETS[next].label} (fps=${Math.round(fps)}, ${kbps}kbps)`, 'info')
+            }
+          }
+        } else {
+          badFramesCount.current  = Math.max(0, badFramesCount.current - 1)
+          goodFramesCount.current = Math.max(0, goodFramesCount.current - 1)
+        }
+      } catch {}
+    }, 2000)
+  }, [append])
+
+  const stopMonitors = useCallback(() => {
+    clearInterval(bitrateInterval.current)
+    clearInterval(qualityMonitor.current)
+    bitrateInterval.current = null
+    qualityMonitor.current  = null
+    badFramesCount.current  = 0
+    goodFramesCount.current = 0
+  }, [])
 
   const startSharing = async () => {
     try {
@@ -50,7 +150,7 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
       if (!peerRef?.current || !remotePeerId) { append('peer não encontrado', 'err'); return }
 
       const call = peerRef.current.call(remotePeerId, stream)
-      const pc = call.peerConnection
+      const pc   = call.peerConnection
       internalPCRef.current = pc
       if (pcRef) pcRef.current = pc
       preferHighQualityCodec(pc)
@@ -71,24 +171,30 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
         if (s === 'connected' || s === 'completed') {
           setStatus('connected')
           append('stream P2P ativo!', 'ok')
+
           const activePreset = QUALITY_PRESETS[qualityRef.current]
           if (activePreset?.maxBitrate) {
-            // Aplica imediatamente
             await applyMaxBitrate(pc, activePreset.maxBitrate)
             append(`bitrate forçado: ${Math.round(activePreset.maxBitrate / 1_000_000)} Mbps`, 'ok')
             // Reaplica a cada 1.5s para combater o GCC
-            const interval = setInterval(async () => {
+            bitrateInterval.current = setInterval(async () => {
               const state = pc.iceConnectionState
               if (state !== 'connected' && state !== 'completed') {
-                clearInterval(interval)
+                clearInterval(bitrateInterval.current)
                 return
               }
-              await applyMaxBitrate(pc, activePreset.maxBitrate)
+              const p = QUALITY_PRESETS[qualityRef.current]
+              if (p?.maxBitrate) await applyMaxBitrate(pc, p.maxBitrate)
             }, 1500)
           }
+
+          // Inicia monitor de qualidade automático
+          startQualityMonitor(pc)
         }
         if (s === 'disconnected' || s === 'failed' || s === 'closed') {
-          setStatus('idle'); append('receptor desconectou')
+          setStatus('idle')
+          stopMonitors()
+          append('receptor desconectou')
         }
       }
       stream.getVideoTracks()[0].onended = stopSharing
@@ -105,44 +211,35 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
     if (localVideoRef.current) localVideoRef.current.srcObject = null
     setSharing(false); setHasStream(false); setStatus('idle')
     internalPCRef.current = null
+    stopMonitors()
     append('transmissão encerrada')
-  }, [append])
+  }, [append, stopMonitors])
 
-  // ── Celular: não suportado ───────────────────────────────────────
+  // ── Celular: não suportado ──────────────────────────────────────
   if (isMobile) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', gap: 28, position: 'relative' }}>
         <div aria-hidden style={{ position: 'fixed', inset: 0, backgroundImage: `linear-gradient(rgba(79,70,229,0.04) 1px, transparent 1px),linear-gradient(90deg, rgba(79,70,229,0.04) 1px, transparent 1px)`, backgroundSize: '44px 44px', pointerEvents: 'none' }} />
-
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, maxWidth: 360, textAlign: 'center' }}>
           <div style={{ width: 64, height: 64, borderRadius: 18, background: 'rgba(79,70,229,0.1)', border: '1px solid rgba(79,70,229,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--accent-light)">
-              <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
-            </svg>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="var(--accent-light)"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg>
           </div>
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>App necessário</h2>
-            <p style={{ fontSize: 14, color: 'var(--text2)', margin: 0, lineHeight: 1.7, fontFamily: 'var(--mono)' }}>
-              Transmitir a tela pelo celular requer o app nativo.<br/>Em breve disponível.
-            </p>
+            <p style={{ fontSize: 14, color: 'var(--text2)', margin: 0, lineHeight: 1.7, fontFamily: 'var(--mono)' }}>Transmitir a tela pelo celular requer o app nativo.<br/>Em breve disponível.</p>
           </div>
-
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border2)', borderRadius: 12, padding: '16px 20px', width: '100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--mono)', textTransform: 'uppercase', letterSpacing: 1 }}>no celular você pode</span>
             <span style={{ fontSize: 14, color: 'var(--text2)' }}>📺 Receber transmissões na tela</span>
             <span style={{ fontSize: 14, color: 'var(--text2)' }}>🔗 Escanear o QR code da TV</span>
           </div>
-
-          <button onClick={onReset} style={{ padding: '12px 24px', borderRadius: 10, fontFamily: 'var(--sans)', fontSize: 14, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border2)', background: 'transparent', color: 'var(--text2)', width: '100%' }}>
-            ← voltar e escolher Receber
-          </button>
+          <button onClick={onReset} style={{ padding: '12px 24px', borderRadius: 10, fontFamily: 'var(--sans)', fontSize: 14, fontWeight: 600, cursor: 'pointer', border: '1px solid var(--border2)', background: 'transparent', color: 'var(--text2)', width: '100%' }}>← voltar e escolher Receber</button>
         </div>
       </div>
     )
   }
 
-  // ── Desktop: transmissor normal ──────────────────────────────────
+  // ── Desktop: transmissor normal ─────────────────────────────────
   const fs = isTVMode ? 16 : 13
 
   return (
@@ -151,6 +248,7 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
 
       <div style={{ maxWidth: 900, width: '100%', margin: '0 auto', padding: isTVMode ? '2rem 2.5rem' : '2rem 1.5rem', display: 'flex', flexDirection: 'column', gap: isTVMode ? 24 : 16, position: 'relative', zIndex: 1 }}>
 
+        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ width: 32, height: 32, background: 'var(--accent)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -166,25 +264,38 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
               {status === 'calling' && 'conectando...'}
               {status === 'connected' && 'transmitindo'}
             </span>
-            <button onClick={onReset} style={{ fontSize: isTVMode ? 13 : 11, fontFamily: 'var(--mono)', background: 'transparent', border: '1px solid var(--border2)', color: 'var(--text3)', padding: isTVMode ? '8px 16px' : '5px 12px', borderRadius: 8, cursor: 'pointer' }}>
-              ✕ sair
-            </button>
+            <button onClick={onReset} style={{ fontSize: isTVMode ? 13 : 11, fontFamily: 'var(--mono)', background: 'transparent', border: '1px solid var(--border2)', color: 'var(--text3)', padding: isTVMode ? '8px 16px' : '5px 12px', borderRadius: 8, cursor: 'pointer' }}>✕ sair</button>
           </div>
         </div>
 
+        {/* Quality presets + auto toggle */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <span style={{ fontSize: isTVMode ? 14 : 11, color: 'var(--text3)', fontFamily: 'var(--mono)' }}>qualidade de transmissão</span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: isTVMode ? 14 : 11, color: 'var(--text3)', fontFamily: 'var(--mono)' }}>qualidade de transmissão</span>
+            {/* Toggle ajuste automático */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+              <div onClick={() => setAutoQuality(v => !v)} style={{ width: 32, height: 18, background: autoQuality ? 'var(--green)' : 'var(--surface3)', borderRadius: 99, position: 'relative', transition: 'background 0.2s', cursor: 'pointer', flexShrink: 0 }}>
+                <div style={{ position: 'absolute', top: 2, left: autoQuality ? 16 : 2, width: 14, height: 14, background: '#fff', borderRadius: '50%', transition: 'left 0.2s' }} />
+              </div>
+              <span style={{ fontSize: 11, color: autoQuality ? 'var(--green)' : 'var(--text3)', fontFamily: 'var(--mono)', transition: 'color 0.2s' }}>
+                ajuste automático
+              </span>
+            </label>
+          </div>
+
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {Object.entries(QUALITY_PRESETS).map(([key, preset]) => (
-              <button key={key} onClick={() => !sharing && setQuality(key)} disabled={sharing}
+              <button key={key}
+                onClick={() => { if (!sharing) { setQuality(key); setAutoQuality(false) } }}
+                disabled={sharing && !autoQuality}
                 style={{
                   padding: isTVMode ? '10px 18px' : '7px 14px', borderRadius: 8,
                   fontSize: isTVMode ? 13 : 11, fontFamily: 'var(--mono)',
-                  cursor: sharing ? 'not-allowed' : 'pointer',
+                  cursor: sharing && !autoQuality ? 'not-allowed' : 'pointer',
                   border: quality === key ? '1px solid rgba(79,70,229,0.6)' : '1px solid var(--border2)',
                   background: quality === key ? 'rgba(79,70,229,0.15)' : 'var(--surface2)',
                   color: quality === key ? 'var(--accent-light)' : 'var(--text2)',
-                  opacity: sharing && quality !== key ? 0.4 : 1,
+                  opacity: sharing && !autoQuality && quality !== key ? 0.4 : 1,
                   display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start', transition: 'all 0.15s',
                 }}>
                 <span style={{ fontWeight: 600 }}>{preset.label}</span>
@@ -192,8 +303,23 @@ export function Sender({ peerRef, connRef, pcRef, isTVMode, onReset }) {
               </button>
             ))}
           </div>
+
+          {/* Feedback de ajuste automático */}
+          {autoMsg && (
+            <div style={{
+              fontSize: 12, fontFamily: 'var(--mono)',
+              color: autoMsg.type === 'warn' ? 'var(--amber)' : 'var(--green)',
+              background: autoMsg.type === 'warn' ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)',
+              border: `1px solid ${autoMsg.type === 'warn' ? 'rgba(245,158,11,0.25)' : 'rgba(16,185,129,0.25)'}`,
+              borderRadius: 8, padding: '6px 12px',
+              animation: 'fadeUp 0.3s ease',
+            }}>
+              {autoMsg.msg}
+            </div>
+          )}
         </div>
 
+        {/* Actions */}
         <div style={{ display: 'flex', gap: 10 }}>
           {!sharing
             ? <button onClick={startSharing} style={{ ...btnPrimary, fontSize: fs, padding: isTVMode ? '14px 28px' : '11px 20px' }}>▶ compartilhar tela</button>
