@@ -168,31 +168,24 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
         )}
 
         {/* Center — vídeo SEMPRE montado, só muda o estilo */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 1, overflow: 'hidden' }}>
 
           {/* Vídeo permanece montado o tempo todo */}
           <video
             ref={remoteVideoRef}
             autoPlay
             playsInline
-            style={{
-              // Em fullscreen: cobre toda a tela via position fixed
-              ...(fakeFullscreen ? {
-                position: 'fixed',
-                inset: 0,
-                width: '100vw',
-                height: '100vh',
-                objectFit: 'contain',
-                background: '#000',
-                zIndex: 9998,
-                display: 'block',
-              } : {
-                width: '100%',
-                height: '100%',
-                objectFit: 'contain',
-                background: '#000',
-                display: hasStream && !needsPlay ? 'block' : 'none',
-              })
+            style={fakeFullscreen ? {
+              position: 'fixed', inset: 0,
+              width: '100vw', height: '100vh',
+              objectFit: 'contain', background: '#000',
+              zIndex: 9998, display: 'block',
+            } : {
+              width: '100%', maxWidth: '100%',
+              maxHeight: '60vh',
+              objectFit: 'contain', background: '#000',
+              borderRadius: 12,
+              display: hasStream && !needsPlay ? 'block' : 'none',
             }}
           />
 
@@ -231,10 +224,11 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
         {/* Bottom bar — oculto em fullscreen */}
         {!fakeFullscreen && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative', zIndex: 1 }}>
-            {hasStream ? <StatsBar stats={stats} videoEl={remoteVideoRef.current} tvMode /> : <div />}
+            {hasStream && !needsPlay ? <StatsBar stats={stats} videoEl={remoteVideoRef.current} tvMode /> : <div />}
             {hasStream && !needsPlay && (
-              <button onClick={enterFullscreen} style={{ fontSize: 13, fontFamily: 'var(--mono)', background: 'var(--accent)', border: 'none', color: '#fff', padding: '10px 22px', borderRadius: 10, cursor: 'pointer', fontWeight: 600 }}>
-                ⛶ tela cheia
+              <button onClick={enterFullscreen} style={{ fontSize: 15, fontFamily: 'var(--mono)', background: 'var(--accent)', border: 'none', color: '#fff', padding: '14px 28px', borderRadius: 12, cursor: 'pointer', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+                tela cheia
               </button>
             )}
           </div>
