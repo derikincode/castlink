@@ -6,6 +6,50 @@ import { StatsBar } from './StatsBar'
 import { StatusDot } from './StatusDot'
 import { LogPanel } from './LogPanel'
 
+// Botão que some após 3s de inatividade e reaparece ao mover mouse/tocar
+function HideableExitButton({ onExit }) {
+  const [visible, setVisible] = useState(true)
+  const timerRef = useRef(null)
+
+  const show = useCallback(() => {
+    setVisible(true)
+    clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => setVisible(false), 3000)
+  }, [])
+
+  useEffect(() => {
+    timerRef.current = setTimeout(() => setVisible(false), 3000)
+    window.addEventListener('keydown', show)
+    window.addEventListener('click', show)
+    window.addEventListener('touchstart', show)
+    return () => {
+      clearTimeout(timerRef.current)
+      window.removeEventListener('keydown', show)
+      window.removeEventListener('click', show)
+      window.removeEventListener('touchstart', show)
+    }
+  }, [show])
+
+  return (
+    <button
+      onClick={onExit}
+      style={{
+        position: 'fixed', top: 24, right: 24, zIndex: 9999,
+        fontSize: 14, fontFamily: 'var(--mono)',
+        background: 'rgba(0,0,0,0.65)',
+        border: '1px solid rgba(255,255,255,0.2)',
+        color: '#fff', padding: '12px 22px', borderRadius: 10,
+        cursor: 'pointer', fontWeight: 600,
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 0.4s ease',
+        pointerEvents: visible ? 'auto' : 'none',
+      }}
+    >
+      ✕ sair tela cheia
+    </button>
+  )
+}
+
 export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }) {
   const [status, setStatus]                 = useState('waiting')
   const [hasStream, setHasStream]           = useState(false)
@@ -152,22 +196,8 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
             }}
           />
 
-          {/* Botão sair fullscreen — flutua sobre o vídeo */}
-          {fakeFullscreen && (
-            <button
-              onClick={exitFullscreen}
-              style={{
-                position: 'fixed', top: 24, right: 24, zIndex: 9999,
-                fontSize: 14, fontFamily: 'var(--mono)',
-                background: 'rgba(0,0,0,0.65)',
-                border: '1px solid rgba(255,255,255,0.2)',
-                color: '#fff', padding: '12px 22px', borderRadius: 10,
-                cursor: 'pointer', fontWeight: 600,
-              }}
-            >
-              ✕ sair tela cheia
-            </button>
-          )}
+          {/* Botão sair fullscreen — some após 3s de inatividade */}
+          {fakeFullscreen && <HideableExitButton onExit={exitFullscreen} />}
 
           {/* Aguardando */}
           {status === 'waiting' && !fakeFullscreen && (
@@ -261,11 +291,7 @@ export function Receiver({ peerRef, connRef, callRef, pcRef, isTVMode, onReset }
               })
             }}
           />
-          {fakeFullscreen && (
-            <button onClick={exitFullscreen} style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, fontSize: 13, fontFamily: 'var(--mono)', background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', padding: '10px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
-              ✕ sair tela cheia
-            </button>
-          )}
+          {fakeFullscreen && <HideableExitButton onExit={exitFullscreen} />}
           {!hasStream && !needsPlay && !fakeFullscreen && (
             <div style={{ aspectRatio: '16/9', background: '#000', borderRadius: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--text3)', fontSize: 13, fontFamily: 'var(--mono)' }}>
               <svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" style={{ opacity: 0.25 }}><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
